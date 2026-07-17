@@ -1,0 +1,3 @@
+rmscene
+PyMuPDF
+svgwrite

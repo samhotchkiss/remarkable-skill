@@ -1,0 +1,20 @@
+# Local configuration with personal settings
+*.local.md
+
+# Runtime data (downloads, cache)
+data/
+
+# Node modules if running scripts locally
+node_modules/
+package-lock.json
+
+# Python venv
+.venv/
+
+# retired skillfish metadata
+.skillfish.json.retired
+
+# rendered artifacts
+*.png
+__pycache__/
+*.pyc
