@@ -1,6 +1,6 @@
 ---
 name: remarkable
-version: 2.0.0
+version: 2.1.0
 description: Manage a reMarkable tablet - send files, fetch and faithfully render handwritten notes, grade/mark up documents, organize the library. Use when the user mentions their reMarkable, sending something to their tablet, reading their handwritten notes/markup, or organizing tablet documents.
 ---
 
@@ -42,6 +42,16 @@ personal conventions).
    becomes a ▲. Pass `closePath=False` for open marks.
 9. **Markup conventions:** the user's ink renders blue, Claude's grading/annotation
    marks red, on paper-white. (Poster style: see `sudoku-poster.py`.)
+10. **Respect pen color and tool.** Use `visible_strokes_colored()` /
+   `draw_strokes_colored()` — color ids map via `COLOR_MAP` (0 black, 1 gray,
+   3 yellow, 4 green, 5 pink, 6 blue, 7 red) and highlighter tools (18; 5/8 on
+   older firmware) render as wide flat translucent strokes UNDER the ink layer,
+   butt caps, no pressure modulation. A yellow highlight rendered as black ink
+   is a rendering defect. Fineliner weight: default `wscale=0.85` (1.5 looks
+   like a marker).
+11. **Don't assume 1404px geometry for pages.** Paper Pro devices write wider
+   coordinates; blank-notebook rendering is extent-aware (grows the page instead
+   of clipping strokes).
 
 ## Setup
 
@@ -94,3 +104,6 @@ replacement, trash the stale copy.
 
 - Handwriting-to-text is visual (Claude reads rendered tiles); no OCR pipeline.
 - Long documents: `render_document(max_pages=...)` to bound work.
+- rmscene (0.8.0, latest) warns "Some data has not been read" on current-firmware
+  files — upstream hasn't caught up with newer block types. Harmless; stroke
+  extraction is unaffected. Re-check upstream if extraction ever misses ink.

@@ -20,9 +20,31 @@ RM_WIDTH, RM_HEIGHT = 1404, 1872
 PAGE_W, PAGE_H = 468.0, 624.0  # PDF points, exact tablet aspect
 SCALE = PAGE_W / RM_WIDTH      # rm units -> page points
 
+# reMarkable color ids -> RGB
+COLOR_MAP = {
+    0: (0.05, 0.05, 0.07),   # black
+    1: (0.45, 0.47, 0.50),   # gray
+    2: (1.0, 1.0, 1.0),      # white (eraser-paint)
+    3: (0.99, 0.85, 0.21),   # yellow
+    4: (0.30, 0.75, 0.35),   # green
+    5: (0.95, 0.45, 0.65),   # pink
+    6: (0.20, 0.35, 0.85),   # blue
+    7: (0.85, 0.15, 0.15),   # red
+}
+# highlighter tool ids (18 current firmware; 5 and 8 on older firmware)
+HIGHLIGHTER_TOOLS = {5, 8, 18}
+HIGHLIGHTER_OPACITY = 0.45
 
-def visible_strokes(rm_path):
-    """Visible (non-erased) strokes as [[(x, y, width_pt, pressure01), ...], ...]
+
+def _color_of(line):
+    cid = getattr(line, "color", 0)
+    cid = getattr(cid, "value", cid)  # rmscene may hand back an enum
+    return COLOR_MAP.get(cid, COLOR_MAP[0])
+
+
+def visible_strokes_colored(rm_path):
+    """Visible (non-erased) strokes with pen metadata:
+    [(pts, tool_id, color_id), ...] where pts = [(x, y, width_pt, pressure01), ...]
     in page-point coordinates (origin top-left of a PAGE_W x PAGE_H page)."""
     with open(rm_path, "rb") as f:
         tree = read_tree(f)
@@ -43,16 +65,26 @@ def visible_strokes(rm_path):
                     for p in child.points
                 ]
                 if pts:
-                    out.append(pts)
+                    tool = getattr(child, "tool", 0)
+                    tool = getattr(tool, "value", tool)
+                    color = getattr(child, "color", 0)
+                    color = getattr(color, "value", color)
+                    out.append((pts, tool, color))
 
     walk(tree.root)
     return out
 
 
-def draw_stroke(page, pts, color=(0, 0, 0), scale=1.0, offset=(0.0, 0.0), wscale=1.5, opacity=1.0):
-    """Pressure-weighted rendering: one segment per point pair, width from pen data."""
+def visible_strokes(rm_path):
+    """Back-compat: bare stroke point lists (no pen metadata)."""
+    return [pts for pts, _tool, _color in visible_strokes_colored(rm_path)]
+
+
+def draw_stroke(page, pts, color=(0, 0, 0), scale=1.0, offset=(0.0, 0.0), wscale=0.85, opacity=1.0):
+    """Pressure-weighted ink rendering: one segment per point pair, width from pen data.
+    Default wscale 0.85 reproduces a fineliner faithfully (1.5 looked like a marker)."""
     for a, b in zip(pts, pts[1:]):
-        w = max(0.35, (a[2] + b[2]) / 2 * wscale * (0.7 + 0.6 * (a[3] + b[3]) / 2))
+        w = max(0.3, (a[2] + b[2]) / 2 * wscale * (0.7 + 0.6 * (a[3] + b[3]) / 2))
         sh = page.new_shape()
         sh.draw_line(
             fitz.Point(offset[0] + a[0] * scale, offset[1] + a[1] * scale),
@@ -60,6 +92,32 @@ def draw_stroke(page, pts, color=(0, 0, 0), scale=1.0, offset=(0.0, 0.0), wscale
         )
         sh.finish(color=color, width=w * scale, stroke_opacity=opacity, lineCap=1, lineJoin=1, closePath=False)
         sh.commit()
+
+
+def draw_highlighter(page, pts, color, scale=1.0, offset=(0.0, 0.0), wscale=1.0):
+    """Highlighter rendering: wide flat stroke, no pressure modulation, translucent,
+    butt caps. Draw ALL highlighter strokes before ink so ink sits on top."""
+    for a, b in zip(pts, pts[1:]):
+        w = max(2.0, (a[2] + b[2]) / 2 * wscale)
+        sh = page.new_shape()
+        sh.draw_line(
+            fitz.Point(offset[0] + a[0] * scale, offset[1] + a[1] * scale),
+            fitz.Point(offset[0] + b[0] * scale, offset[1] + b[1] * scale),
+        )
+        sh.finish(color=color, width=w * scale, stroke_opacity=HIGHLIGHTER_OPACITY, lineCap=0, lineJoin=1, closePath=False)
+        sh.commit()
+
+
+def draw_strokes_colored(page, colored, scale=1.0, offset=(0.0, 0.0), wscale=0.85, ink_override=None):
+    """Render a visible_strokes_colored() list faithfully: highlighters first
+    (translucent under-layer), then ink in its native color (or ink_override)."""
+    hl = [(pts, color) for pts, tool, color in colored if tool in HIGHLIGHTER_TOOLS]
+    ink = [(pts, color) for pts, tool, color in colored if tool not in HIGHLIGHTER_TOOLS]
+    for pts, color in hl:
+        draw_highlighter(page, pts, COLOR_MAP.get(color, COLOR_MAP[3]), scale=scale, offset=offset)
+    for pts, color in ink:
+        c = ink_override if ink_override is not None else COLOR_MAP.get(color, COLOR_MAP[0])
+        draw_stroke(page, pts, color=c, scale=scale, offset=offset, wscale=wscale)
 
 
 def page_order(doc_dir):
@@ -78,9 +136,11 @@ def page_order(doc_dir):
     return [p.stem for p in Path(doc_dir).rglob("*.rm")]
 
 
-def render_document(extracted_dir, out_pdf, ink=(0, 0, 0), max_pages=None, wscale=1.5):
+def render_document(extracted_dir, out_pdf, ink=None, max_pages=None, wscale=0.85):
     """Render an extracted document archive: original PDF pages (if any) with
     handwriting overlaid, or handwriting on blank tablet-aspect pages for notebooks.
+    Strokes render in their native pen colors with highlighters as a translucent
+    under-layer; pass ink=(r,g,b) to force all pen strokes to one color.
     Returns the number of pages rendered."""
     d = Path(extracted_dir)
     pdfs = sorted(d.glob("*.pdf"))
@@ -99,8 +159,7 @@ def render_document(extracted_dir, out_pdf, ink=(0, 0, 0), max_pages=None, wscal
                 continue
             page = out[i]
             s = page.rect.width / PAGE_W
-            for stroke in visible_strokes(rm):
-                draw_stroke(page, stroke, color=ink, scale=s, wscale=wscale)
+            draw_strokes_colored(page, visible_strokes_colored(rm), scale=s, wscale=wscale, ink_override=ink)
         src.close()
     else:
         count = 0
@@ -110,12 +169,21 @@ def render_document(extracted_dir, out_pdf, ink=(0, 0, 0), max_pages=None, wscal
             rm = rm_by_stem.get(uid)
             if not rm:
                 continue
-            strokes = visible_strokes(rm)
-            if not strokes:
+            colored = visible_strokes_colored(rm)
+            if not colored:
                 continue
-            page = out.new_page(width=PAGE_W, height=PAGE_H)
-            for stroke in strokes:
-                draw_stroke(page, stroke, color=ink, wscale=wscale)
+            # Extent-aware page: wider devices (e.g. Paper Pro, 1620px) produce
+            # coordinates outside the classic 1404px frame — grow the page rather
+            # than clipping strokes.
+            xs = [p[0] for pts, _t, _c in colored for p in pts]
+            ys = [p[1] for pts, _t, _c in colored for p in pts]
+            M = 12
+            x0 = min(0.0, min(xs) - M)
+            y0 = min(0.0, min(ys) - M)
+            x1 = max(PAGE_W, max(xs) + M)
+            y1 = max(PAGE_H, max(ys) + M)
+            page = out.new_page(width=x1 - x0, height=y1 - y0)
+            draw_strokes_colored(page, colored, offset=(-x0, -y0), wscale=wscale, ink_override=ink)
             count += 1
 
     n = len(out)
