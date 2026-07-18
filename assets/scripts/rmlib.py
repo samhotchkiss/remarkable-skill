@@ -42,10 +42,43 @@ def _color_of(line):
     return COLOR_MAP.get(cid, COLOR_MAP[0])
 
 
+def _legacy_strokes(rm_path, version):
+    """Parse legacy .lines format (v3/v5): binary layers/strokes/points.
+    Coordinates are left-origin 0..1404 (NOT centered like v6)."""
+    import struct
+
+    out = []
+    with open(rm_path, "rb") as f:
+        f.seek(43)  # fixed-width header
+        (nlayers,) = struct.unpack("<i", f.read(4))
+        for _ in range(nlayers):
+            (nstrokes,) = struct.unpack("<i", f.read(4))
+            for _ in range(nstrokes):
+                if version >= 5:
+                    pen, color, _u1, width, _u2, npts = struct.unpack("<iiifii", f.read(24))
+                else:
+                    pen, color, _u1, width, npts = struct.unpack("<iiifi", f.read(20))
+                pts = []
+                for _ in range(npts):
+                    x, y, _speed, _direction, pw, pressure = struct.unpack("<ffffff", f.read(24))
+                    pts.append((x * SCALE, y * SCALE, max(pw, width) * SCALE, min(max(pressure, 0.0), 1.0)))
+                if pts:
+                    out.append((pts, pen, color))
+    return out
+
+
 def visible_strokes_colored(rm_path):
     """Visible (non-erased) strokes with pen metadata:
     [(pts, tool_id, color_id), ...] where pts = [(x, y, width_pt, pressure01), ...]
-    in page-point coordinates (origin top-left of a PAGE_W x PAGE_H page)."""
+    in page-point coordinates (origin top-left of a PAGE_W x PAGE_H page).
+    Handles v6 (scene tree) and legacy v3/v5 (.lines binary) formats."""
+    with open(rm_path, "rb") as f:
+        header = f.read(43)
+    if header.startswith(b"reMarkable .lines file, version=5"):
+        return _legacy_strokes(rm_path, 5)
+    if header.startswith(b"reMarkable .lines file, version=3"):
+        return _legacy_strokes(rm_path, 3)
+
     with open(rm_path, "rb") as f:
         tree = read_tree(f)
     out = []
@@ -80,32 +113,48 @@ def visible_strokes(rm_path):
     return [pts for pts, _tool, _color in visible_strokes_colored(rm_path)]
 
 
+def _draw_runs(page, pts, widths, color, scale, offset, opacity, cap):
+    """Draw a stroke as polyline runs grouped by quantized width — one Shape commit
+    per stroke instead of one per segment (50x fewer PDF ops, visually identical)."""
+    sh = page.new_shape()
+    run = [pts[0]]
+    run_w = widths[0]
+    QUANT = 0.25
+
+    def flush(run, w):
+        if len(run) < 2:
+            return
+        sh.draw_polyline([fitz.Point(offset[0] + p[0] * scale, offset[1] + p[1] * scale) for p in run])
+        sh.finish(color=color, width=w * scale, stroke_opacity=opacity, lineCap=cap, lineJoin=1, closePath=False)
+
+    for p, w in zip(pts[1:], widths[1:]):
+        if abs(w - run_w) > QUANT:
+            run.append(p)
+            flush(run, run_w)
+            run = [p]
+            run_w = w
+        else:
+            run.append(p)
+    flush(run, run_w)
+    sh.commit()
+
+
 def draw_stroke(page, pts, color=(0, 0, 0), scale=1.0, offset=(0.0, 0.0), wscale=0.85, opacity=1.0):
-    """Pressure-weighted ink rendering: one segment per point pair, width from pen data.
-    Default wscale 0.85 reproduces a fineliner faithfully (1.5 looked like a marker)."""
-    for a, b in zip(pts, pts[1:]):
-        w = max(0.3, (a[2] + b[2]) / 2 * wscale * (0.7 + 0.6 * (a[3] + b[3]) / 2))
-        sh = page.new_shape()
-        sh.draw_line(
-            fitz.Point(offset[0] + a[0] * scale, offset[1] + a[1] * scale),
-            fitz.Point(offset[0] + b[0] * scale, offset[1] + b[1] * scale),
-        )
-        sh.finish(color=color, width=w * scale, stroke_opacity=opacity, lineCap=1, lineJoin=1, closePath=False)
-        sh.commit()
+    """Pressure-weighted ink rendering. Default wscale 0.85 reproduces a fineliner
+    faithfully (1.5 looked like a marker)."""
+    if len(pts) < 2:
+        return
+    widths = [max(0.3, p[2] * wscale * (0.7 + 0.6 * p[3])) for p in pts]
+    _draw_runs(page, pts, widths, color, scale, offset, opacity, cap=1)
 
 
 def draw_highlighter(page, pts, color, scale=1.0, offset=(0.0, 0.0), wscale=1.0):
     """Highlighter rendering: wide flat stroke, no pressure modulation, translucent,
     butt caps. Draw ALL highlighter strokes before ink so ink sits on top."""
-    for a, b in zip(pts, pts[1:]):
-        w = max(2.0, (a[2] + b[2]) / 2 * wscale)
-        sh = page.new_shape()
-        sh.draw_line(
-            fitz.Point(offset[0] + a[0] * scale, offset[1] + a[1] * scale),
-            fitz.Point(offset[0] + b[0] * scale, offset[1] + b[1] * scale),
-        )
-        sh.finish(color=color, width=w * scale, stroke_opacity=HIGHLIGHTER_OPACITY, lineCap=0, lineJoin=1, closePath=False)
-        sh.commit()
+    if len(pts) < 2:
+        return
+    widths = [max(2.0, p[2] * wscale) for p in pts]
+    _draw_runs(page, pts, widths, color, scale, offset, HIGHLIGHTER_OPACITY, cap=0)
 
 
 def draw_strokes_colored(page, colored, scale=1.0, offset=(0.0, 0.0), wscale=0.85, ink_override=None):

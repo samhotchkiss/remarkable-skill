@@ -1,6 +1,6 @@
 ---
 name: remarkable
-version: 2.1.0
+version: 2.2.0
 description: Manage a reMarkable tablet - send files, fetch and faithfully render handwritten notes, grade/mark up documents, organize the library. Use when the user mentions their reMarkable, sending something to their tablet, reading their handwritten notes/markup, or organizing tablet documents.
 ---
 
@@ -32,6 +32,10 @@ personal conventions).
    Uniform thin polylines distort glyphs (a curly handwritten "2" reads as an "8").
 5. **Visible strokes only.** Extract via `rmlib.visible_strokes()` (scene-tree walk);
    raw `read_blocks()` includes erased strokes.
+   **Never interpret a parse failure as an empty document.** Pre-2022 notebooks use
+   the legacy v3/v5 `.lines` binary format (rmscene v6-only) — rmlib parses those
+   transparently. Swallowed parse errors once mislabeled 18 real notebooks as
+   empty and staged them for deletion.
 6. **v6 coordinates are center-origin in x.** `rmlib` handles the `+RM_WIDTH/2`
    shift. Display is 1404x1872 (3:4); a 468x624pt PDF page fills it exactly —
    generate documents at that size.
@@ -81,6 +85,25 @@ personal conventions).
 | `peek.py <zips-dir> <out-dir>` | labeled contact sheets for visual triage of many docs |
 | `make-sudoku.py` | example: generate a puzzle PDF sized for the tablet |
 | `sudoku-poster.py` | example: glyph clustering, cold reading, graded-poster markup |
+
+## Local mirror (preferred read path for agents)
+
+A launchd agent (`install-mirror-daemon.sh`, label `com.remarkable.mirror`) syncs
+the cloud library to `$REMARKABLE_MIRROR` (default `~/reMarkable`) every 3 minutes.
+**Agents should read the mirror instead of hitting the API:**
+
+- `INDEX.md` — read this first: recently-updated list + full tree.
+- `<Folder>/<Doc>/pages/page-NN.png` — current state of every page.
+- `<Folder>/<Doc>/delta/delta-NN.png` — pages with ink changed since previous
+  sync: old strokes faded gray, NEW strokes in full color. **This is how you see
+  what the user just annotated.**
+- `<Folder>/<Doc>/render.pdf`, `raw/`, `meta.json` — full render, source archive, sync info.
+- `CHANGELOG.jsonl` — append-only event log (added/updated/moved/trashed).
+
+**Trigger an immediate sync** (after uploading, or when the user says "look at my
+notes"): `bash assets/scripts/sync-now.sh` — synchronous, safe to run anytime.
+Push flow: `upload.ts <file>` then `sync-now.sh` to land it in the mirror.
+The mirror is read-only — never write into it except via the sync scripts.
 
 ## Core workflows
 
