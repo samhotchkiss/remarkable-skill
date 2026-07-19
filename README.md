@@ -10,8 +10,8 @@ Forked from [caseyg/caseys-claude](https://github.com/caseyg/caseys-claude)'s
 differences from the original:
 
 - **rmapi-js v11** (two-argument getters; v9 no longer works against the cloud API)
-- **Local token-file auth** (`~/.config/remarkable/device_token`) instead of a
-  1Password round-trip — works in headless/remote sessions
+- **Local token-file auth** (`~/.config/remarkable/device_token`) — no secret-manager
+  round-trips, works in headless/remote sessions
 - **Faithful handwriting rendering**: visible-strokes-only extraction (erased ink
   excluded) and pressure-weighted stroke drawing via `assets/scripts/rmlib.py` —
   uniform thin polylines demonstrably distort glyphs

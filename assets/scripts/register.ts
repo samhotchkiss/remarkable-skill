@@ -7,7 +7,7 @@
  * 1. Go to https://my.remarkable.com/device/browser/connect
  * 2. Copy the 8-character code displayed
  * 3. Run this script with the code
- * 4. Device token will be stored in 1Password
+ * 4. Device token is stored at ~/.config/remarkable/device_token
  */
 
 import { register } from "rmapi-js";
@@ -34,16 +34,16 @@ async function main() {
     console.log("Registration successful!");
     console.log(`Device token: ${deviceToken.slice(0, 20)}...`);
 
-    // Store in 1Password
-    console.log("\nStoring in 1Password...");
+    // Store in the local token file
+    console.log("\nStoring device token...");
 
     if (storeDeviceToken(deviceToken)) {
-      console.log('Stored in 1Password item "Remarkable"');
+      console.log('Stored at ~/.config/remarkable/device_token');
       console.log("\nSetup complete! You can now use the reMarkable skill.");
     } else {
-      console.error("Failed to store in 1Password. Store manually:");
-      console.error("  Item: Remarkable");
-      console.error("  Field: device_token");
+      console.error("Failed to store token. Store manually:");
+      console.error("  File: ~/.config/remarkable/device_token");
+
       console.error(`  Value: ${deviceToken}`);
       process.exit(1);
     }

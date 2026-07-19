@@ -5,73 +5,52 @@
  */
 
 import { remarkable, type RemarkableApi, type Entry } from "rmapi-js";
-import { execFileSync } from "child_process";
+import { readFileSync, writeFileSync, mkdirSync, chmodSync } from "fs";
+import * as path from "path";
 
-// 1Password item name for Remarkable API credentials
-// Override with OP_REMARKABLE_ITEM env var if you have naming conflicts
-const OP_ITEM_NAME = process.env.OP_REMARKABLE_ITEM || "Remarkable";
-
-/**
- * Retrieve device token from 1Password
- * @returns Device token string
- * @throws Error if 1Password item not found
- */
-export async function getDeviceToken(): Promise<string> {
-  // Prefer local token file — 1Password requires interactive authorization,
-  // which is unavailable in remote/headless sessions.
-  const tokenFile =
-    process.env.REMARKABLE_TOKEN_FILE || `${process.env.HOME}/.config/remarkable/device_token`;
-  try {
-    const { readFileSync } = await import("fs");
-    const token = readFileSync(tokenFile, "utf-8").trim();
-    if (token) return token;
-  } catch {
-    // fall through to 1Password
-  }
-  try {
-    const result = execFileSync("op", ["item", "get", OP_ITEM_NAME, "--fields", "device_token", "--reveal"], {
-      encoding: "utf-8",
-    });
-    return result.trim();
-  } catch (error) {
-    throw new Error(
-      "Device token not found in 1Password. Run registration first:\n" +
-        "1. Go to https://my.remarkable.com/device/browser/connect\n" +
-        "2. Get the 8-character code\n" +
-        "3. Run: npx tsx skills/remarkable/assets/scripts/register.ts <code>"
-    );
-  }
+function tokenFilePath(): string {
+  return process.env.REMARKABLE_TOKEN_FILE || `${process.env.HOME}/.config/remarkable/device_token`;
 }
 
 /**
- * Store device token in 1Password (create or update)
- * @param token - Device token to store
+ * Retrieve the device token from the local token file.
+ * This is the ONLY auth source — no secret-manager fallbacks (they require
+ * interactive authorization, which headless/remote sessions can't provide).
+ * @throws Error with registration instructions if the token is missing
+ */
+export async function getDeviceToken(): Promise<string> {
+  try {
+    const token = readFileSync(tokenFilePath(), "utf-8").trim();
+    if (token) return token;
+  } catch {
+    // fall through to error below
+  }
+  throw new Error(
+    `Device token not found at ${tokenFilePath()}. Register this device first:\n` +
+      "1. Go to https://my.remarkable.com/device/browser/connect\n" +
+      "2. Get the 8-character code\n" +
+      "3. Run: npx tsx assets/scripts/register.ts <code>"
+  );
+}
+
+/**
+ * Store the device token in the local token file (mode 600).
  * @returns true if successful
  */
 export function storeDeviceToken(token: string): boolean {
   try {
-    // Try to update existing item first
-    execFileSync("op", ["item", "edit", "Remarkable", `device_token=${token}`], {
-      encoding: "utf-8",
-      stdio: "pipe",
-    });
+    const file = tokenFilePath();
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, token.trim() + "\n");
+    chmodSync(file, 0o600);
     return true;
   } catch {
-    try {
-      // Create new item if it doesn't exist
-      execFileSync("op", ["item", "create", "--category=API Credential", "--title=Remarkable", `device_token=${token}`], {
-        encoding: "utf-8",
-        stdio: "pipe",
-      });
-      return true;
-    } catch {
-      return false;
-    }
+    return false;
   }
 }
 
 /**
- * Initialize reMarkable API with device token from 1Password
+ * Initialize reMarkable API with the device token from the local token file
  * @returns Initialized API instance
  */
 export async function initApi(): Promise<RemarkableApi> {

@@ -20,7 +20,7 @@ personal conventions).
    `~/.config/remarkable/device_token` (mode 600). Prefer it over any secret
    manager that needs interactive authorization — remote/headless sessions
    can't answer those prompts. `common.ts getDeviceToken()` reads the file
-   first and only falls back to 1Password's `op` CLI.
+   and is the only auth source — no secret-manager fallbacks.
 2. **rmapi-js v11 API.** All getters take `(id, hash)`: `getDocument(id, hash)`,
    `getPdf(id, hash)`, etc. `package.json` pins `rmapi-js@^11`. Do not downgrade —
    v9/v10 fail against the current cloud API ("unexpected 'rm-filename' header").
