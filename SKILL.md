@@ -83,6 +83,10 @@ personal conventions).
 | `rmlib.py` | **the** stroke library: `visible_strokes`, `draw_stroke`, `render_document`, `cluster_strokes`, `page_order` |
 | `render-annotations.py <extracted> <out.pdf>` | faithful PDF render of any downloaded doc |
 | `peek.py <zips-dir> <out-dir>` | labeled contact sheets for visual triage of many docs |
+| `mirror-sync.ts` | one mirror sync pass (change detection by hash, renders via mirror-render.py) |
+| `mirror-render.py <docdir>` | per-doc mirror render: pages/, delta/ (new-ink) PNGs, render.pdf |
+| `install-mirror-daemon.sh` | install the launchd agent that syncs every 3 min |
+| `sync-now.sh` | trigger an immediate synchronous mirror sync (agent-safe) |
 | `make-sudoku.py` | example: generate a puzzle PDF sized for the tablet |
 | `sudoku-poster.py` | example: glyph clustering, cold reading, graded-poster markup |
 
